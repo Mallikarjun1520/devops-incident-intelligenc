@@ -1,0 +1,14 @@
+2026-10-02T09:14:01Z orders-api-6c9d7f8b5-k2m4n  Started container orders-api
+2026-10-02T09:14:02Z ERROR orders-api: Configuration error: required environment variable PAYMENT_GATEWAY_KEY is not set
+2026-10-02T09:14:02Z ERROR orders-api: Shutting down (exit code 1)
+2026-10-02T09:14:15Z WARN  kubelet: Back-off restarting failed container orders-api in pod orders-api-6c9d7f8b5-k2m4n_prod
+2026-10-02T09:15:40Z WARN  Readiness probe failed: Get "http://10.0.3.17:8080/healthz": connect: connection refused
+
+$ kubectl get pods -n prod -l app=orders-api
+NAME                          READY   STATUS             RESTARTS      AGE
+orders-api-6c9d7f8b5-k2m4n    0/1     CrashLoopBackOff   6 (2m ago)    11m
+orders-api-6c9d7f8b5-p8x2q    0/1     CrashLoopBackOff   6 (90s ago)   11m
+orders-api-5b8f6d7c4-h9t5w    1/1     Running            0             3d
+
+Context: Helm release orders-api v2.8.0 deployed to the production EKS cluster at 09:12 UTC.
+Customers are seeing intermittent 503 errors on checkout. Error rate on the ingress is ~18%.

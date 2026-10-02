@@ -1,0 +1,435 @@
+[
+  {
+    "incident_id": "CUR-001",
+    "title": "EKS Pod CrashLoopBackOff After Missing Secret Key",
+    "service": "orders-api",
+    "category": "Kubernetes",
+    "severity": "High",
+    "environment": "Production",
+    "description": "After a Helm release, orders-api pods restarted continuously and the rollout stalled at 1 of 4 ready replicas.",
+    "symptoms": [
+      "Pods in CrashLoopBackOff",
+      "Rollout stuck, readiness never passes",
+      "Elevated 503s from the ingress"
+    ],
+    "logs": [
+      "Error: required environment variable PAYMENT_GATEWAY_KEY is not set",
+      "Back-off restarting failed container orders-api in pod orders-api-6c9d7f8b5-k2m4n",
+      "Container exited with code 1"
+    ],
+    "affected_components": [
+      "AWS EKS",
+      "orders-api",
+      "Helm"
+    ],
+    "root_cause": "The new chart version referenced a Kubernetes Secret key (PAYMENT_GATEWAY_KEY) that had not been created in the production namespace, so the application exited at startup.",
+    "resolution": [
+      "Inspect the failing pod: `kubectl describe pod <pod> -n <namespace>` and `kubectl logs <pod> -n <namespace> --previous`",
+      "Create the missing secret key in the namespace through the approved secrets workflow",
+      "Roll the deployment forward once the secret exists",
+      "Confirm all replicas are Ready"
+    ],
+    "preventive_actions": [
+      "Validate required env vars/secrets in CI before deploy (helm template + kubeconform + secret existence check)",
+      "Add a startup probe and a clear fail-fast error message",
+      "Use a staged rollout with automatic rollback on failed readiness"
+    ],
+    "keywords": [
+      "crashloopbackoff",
+      "eks",
+      "secret",
+      "helm"
+    ],
+    "timestamp": "2026-09-15T10:00:00Z"
+  },
+  {
+    "incident_id": "CUR-002",
+    "title": "Payment Service OOMKilled Under Peak Traffic",
+    "service": "payment-service",
+    "category": "Memory",
+    "severity": "Critical",
+    "environment": "Production",
+    "description": "payment-service containers were terminated repeatedly during a flash sale; checkout latency spiked and error rate exceeded 20%.",
+    "symptoms": [
+      "Containers restarting with reason OOMKilled",
+      "Exit code 137",
+      "Memory usage near the container limit before each restart",
+      "Checkout requests failing with 502/504"
+    ],
+    "logs": [
+      "Last State: Terminated Reason: OOMKilled Exit Code: 137",
+      "WARN heap usage 94% of 512Mi",
+      "kubelet: container payment-service exceeded memory limit"
+    ],
+    "affected_components": [
+      "payment-service",
+      "Kubernetes",
+      "Horizontal Pod Autoscaler"
+    ],
+    "root_cause": "The memory limit (512Mi) was too low for peak request concurrency, and an unbounded in-memory response cache grew until the kernel OOM-killed the container.",
+    "resolution": [
+      "Confirm with `kubectl describe pod <pod> -n <namespace>` (Last State: OOMKilled)",
+      "Temporarily raise the memory limit/request via the normal change process",
+      "Cap or disable the in-memory cache",
+      "Scale replicas to spread load while the fix rolls out"
+    ],
+    "preventive_actions": [
+      "Load-test before peak events and size limits from measured p95 usage",
+      "Alert on container memory above 85% of limit",
+      "Bound all in-process caches (max entries / TTL)"
+    ],
+    "keywords": [
+      "oomkilled",
+      "memory",
+      "137",
+      "limits"
+    ],
+    "timestamp": "2026-09-15T10:00:00Z"
+  },
+  {
+    "incident_id": "CUR-003",
+    "title": "PostgreSQL Connection Exhaustion: Too Many Connections",
+    "service": "accounts-db",
+    "category": "Database",
+    "severity": "Critical",
+    "environment": "Production",
+    "description": "Applications began failing to open database connections; the RDS PostgreSQL instance reported it had reached max_connections after a service scaled out.",
+    "symptoms": [
+      "Application errors: FATAL: sorry, too many clients already",
+      "Request timeouts across several services",
+      "Database CPU normal but connection count at the limit"
+    ],
+    "logs": [
+      "FATAL: remaining connection slots are reserved for non-replication superuser connections",
+      "HikariPool-1 - Connection is not available, request timed out after 30000ms",
+      "pg_stat_activity shows 400+ idle connections"
+    ],
+    "affected_components": [
+      "PostgreSQL",
+      "Amazon RDS",
+      "Connection pool"
+    ],
+    "root_cause": "An autoscaling event tripled application replicas, each with a pool of 50 connections, exceeding the database max_connections of 500 while idle connections were never reclaimed.",
+    "resolution": [
+      "Check connection usage: `SELECT state, count(*) FROM pg_stat_activity GROUP BY state;` (read-only)",
+      "Reduce per-replica pool size and idle timeout",
+      "Introduce PgBouncer (transaction pooling) in front of the database",
+      "Scale down replicas temporarily to restore headroom"
+    ],
+    "preventive_actions": [
+      "Budget connections: replicas x pool size must stay below max_connections with headroom",
+      "Alert on connection utilisation above 80%",
+      "Use a connection pooler for all services"
+    ],
+    "keywords": [
+      "postgresql",
+      "connections",
+      "pool",
+      "rds"
+    ],
+    "timestamp": "2026-09-15T10:00:00Z"
+  },
+  {
+    "incident_id": "CUR-004",
+    "title": "Redis Cache Outage Causing Database Overload",
+    "service": "catalog-service",
+    "category": "Cache",
+    "severity": "High",
+    "environment": "Production",
+    "description": "An ElastiCache Redis node failed over; connections were refused for several minutes and the resulting cache misses overloaded the primary database.",
+    "symptoms": [
+      "Redis connection refused / timeouts",
+      "Cache hit rate dropped to near 0%",
+      "Database CPU and latency spiked",
+      "Catalog pages slow or failing"
+    ],
+    "logs": [
+      "redis.exceptions.ConnectionError: Error 111 connecting to catalog-redis:6379. Connection refused.",
+      "WARN cache miss ratio 98%",
+      "ElastiCache event: Failover from primary node complete"
+    ],
+    "affected_components": [
+      "Redis",
+      "AWS ElastiCache",
+      "PostgreSQL",
+      "catalog-service"
+    ],
+    "root_cause": "A Redis primary failover left clients using stale connections; with no circuit breaker or request coalescing, every request fell through to the database (cache stampede).",
+    "resolution": [
+      "Check ElastiCache events and node status in the AWS console or CLI (read-only)",
+      "Restart client connections gracefully so they resolve the new primary endpoint",
+      "Temporarily rate-limit expensive catalog endpoints",
+      "Warm the cache gradually after recovery"
+    ],
+    "preventive_actions": [
+      "Add circuit breakers and client retry with backoff to cache clients",
+      "Use request coalescing / stale-while-revalidate",
+      "Alert on cache hit ratio drops"
+    ],
+    "keywords": [
+      "redis",
+      "failover",
+      "cache stampede",
+      "elasticache"
+    ],
+    "timestamp": "2026-09-15T10:00:00Z"
+  },
+  {
+    "incident_id": "CUR-005",
+    "title": "IAM AccessDenied for EKS Service Account (IRSA)",
+    "service": "report-generator",
+    "category": "Authentication",
+    "severity": "High",
+    "environment": "Production",
+    "description": "Nightly report jobs failed to write to S3 after an IAM role trust policy change; pods received AccessDenied from AWS APIs.",
+    "symptoms": [
+      "Jobs failing with AccessDenied on S3 PutObject",
+      "sts:AssumeRoleWithWebIdentity errors",
+      "Reports missing for downstream teams"
+    ],
+    "logs": [
+      "botocore.exceptions.ClientError: An error occurred (AccessDenied) when calling the PutObject operation",
+      "An error occurred (AccessDenied) when calling the AssumeRoleWithWebIdentity operation: Not authorized to perform sts:AssumeRoleWithWebIdentity",
+      "arn:aws:iam::123456789012:role/report-generator-irsa"
+    ],
+    "affected_components": [
+      "AWS IAM",
+      "AWS EKS",
+      "Amazon S3",
+      "report-generator"
+    ],
+    "root_cause": "A Terraform change rewrote the role trust policy with the wrong OIDC provider and service-account subject, so the pod's web-identity token was no longer trusted.",
+    "resolution": [
+      "Compare the role trust policy with the cluster OIDC issuer and the service account namespace/name (read-only)",
+      "Check `kubectl describe sa <serviceaccount> -n <namespace>` for the role annotation",
+      "Correct the trust policy through the reviewed Terraform pipeline",
+      "Re-run the failed jobs"
+    ],
+    "preventive_actions": [
+      "Review IAM trust-policy diffs in pull requests with a second approver",
+      "Add an automated IRSA smoke test after IAM changes",
+      "Alert on spikes in AccessDenied CloudTrail events"
+    ],
+    "keywords": [
+      "iam",
+      "irsa",
+      "accessdenied",
+      "sts",
+      "eks"
+    ],
+    "timestamp": "2026-09-15T10:00:00Z"
+  },
+  {
+    "incident_id": "CUR-006",
+    "title": "NGINX Ingress 502 Bad Gateway After Backend Pod Rotation",
+    "service": "web-frontend",
+    "category": "API Gateway",
+    "severity": "High",
+    "environment": "Production",
+    "description": "Users received intermittent 502 errors during a rolling deployment; the ingress controller kept routing to terminating pods.",
+    "symptoms": [
+      "502 Bad Gateway from ingress",
+      "Errors only during deployments",
+      "Upstream connection reset in ingress logs"
+    ],
+    "logs": [
+      "[error] connect() failed (111: Connection refused) while connecting to upstream",
+      "upstream prematurely closed connection while reading response header from upstream",
+      "Deployment web-frontend rolling update in progress"
+    ],
+    "affected_components": [
+      "NGINX Ingress Controller",
+      "Kubernetes",
+      "web-frontend"
+    ],
+    "root_cause": "Pods were removed from rotation before in-flight requests drained: no preStop delay and a readiness probe that lagged endpoint removal.",
+    "resolution": [
+      "Verify the pattern: correlate 502 timestamps with rollout events (`kubectl rollout history deployment/<name> -n <namespace>`)",
+      "Add a preStop sleep and align terminationGracePeriodSeconds",
+      "Tune readiness probe period and maxUnavailable"
+    ],
+    "preventive_actions": [
+      "Standardise graceful-shutdown settings in the deployment template",
+      "Enable connection draining on load balancers",
+      "Run deployment smoke tests under load"
+    ],
+    "keywords": [
+      "ingress",
+      "nginx",
+      "502",
+      "rolling update"
+    ],
+    "timestamp": "2026-09-15T10:00:00Z"
+  },
+  {
+    "incident_id": "CUR-007",
+    "title": "Failed Production Deployment: ImagePullBackOff from Expired Registry Credentials",
+    "service": "notification-service",
+    "category": "Deployment",
+    "severity": "Medium",
+    "environment": "Production",
+    "description": "A release stalled because new pods could not pull the container image; the registry pull secret had expired.",
+    "symptoms": [
+      "Pods in ImagePullBackOff / ErrImagePull",
+      "Deployment rollout did not progress",
+      "Old replicas still serving traffic"
+    ],
+    "logs": [
+      "Failed to pull image \"registry.example.com/notification-service:2.14.0\": unauthorized: authentication required",
+      "Warning Failed kubelet ErrImagePull",
+      "Back-off pulling image"
+    ],
+    "affected_components": [
+      "Kubernetes",
+      "Container registry",
+      "CI/CD pipeline"
+    ],
+    "root_cause": "The imagePullSecret used by the namespace held a registry token that expired the previous day.",
+    "resolution": [
+      "Confirm via `kubectl describe pod <pod> -n <namespace>` events",
+      "Rotate the registry credential and update the pull secret via the secrets workflow",
+      "Retry the rollout"
+    ],
+    "preventive_actions": [
+      "Automate credential rotation and alert 14 days before expiry",
+      "Use cloud-native registry auth (IAM/IRSA) instead of static tokens"
+    ],
+    "keywords": [
+      "imagepullbackoff",
+      "registry",
+      "credentials",
+      "deployment"
+    ],
+    "timestamp": "2026-09-15T10:00:00Z"
+  },
+  {
+    "incident_id": "CUR-008",
+    "title": "Service Timeout Cascade Due to Slow Downstream Dependency",
+    "service": "checkout-service",
+    "category": "Networking",
+    "severity": "Critical",
+    "environment": "Production",
+    "description": "Checkout latency rose from 200ms to 30s after a downstream inventory service slowed; threads were exhausted and healthy services began timing out.",
+    "symptoms": [
+      "Gateway timeouts (504)",
+      "Thread pool exhaustion in checkout-service",
+      "Latency spike propagating upstream"
+    ],
+    "logs": [
+      "java.net.SocketTimeoutException: Read timed out calling inventory-service",
+      "WARN executor queue full, rejecting tasks",
+      "504 Gateway Time-out upstream timed out (110: Connection timed out)"
+    ],
+    "affected_components": [
+      "checkout-service",
+      "inventory-service",
+      "API Gateway"
+    ],
+    "root_cause": "Inventory-service degraded because of an unindexed query; checkout used long default timeouts without a circuit breaker, so blocked threads cascaded the failure.",
+    "resolution": [
+      "Identify the slow dependency from tracing/latency dashboards",
+      "Shed load or disable non-essential inventory calls via feature flag",
+      "Fix the slow query (add index) through the normal change process",
+      "Reduce client timeouts and enable the circuit breaker"
+    ],
+    "preventive_actions": [
+      "Set explicit timeouts and circuit breakers on every remote call",
+      "Add bulkheads (separate thread pools)",
+      "Load-test dependency degradation scenarios"
+    ],
+    "keywords": [
+      "timeout",
+      "cascade",
+      "circuit breaker",
+      "504"
+    ],
+    "timestamp": "2026-09-15T10:00:00Z"
+  },
+  {
+    "incident_id": "CUR-009",
+    "title": "Database Connection Failures After Failed Failover and DNS Caching",
+    "service": "inventory-service",
+    "category": "Database",
+    "severity": "High",
+    "environment": "Production",
+    "description": "After an RDS Multi-AZ failover, applications kept connecting to the old primary IP and failed to connect for roughly 15 minutes.",
+    "symptoms": [
+      "Connection refused / timeout to database host",
+      "Errors persisted after the database was healthy",
+      "Restarting pods restored service"
+    ],
+    "logs": [
+      "org.postgresql.util.PSQLException: Connection to inventory-db.cluster-xyz.eu-west-1.rds.amazonaws.com:5432 refused",
+      "java.net.UnknownHostException intermittent",
+      "RDS event: Multi-AZ instance failover completed"
+    ],
+    "affected_components": [
+      "Amazon RDS",
+      "PostgreSQL",
+      "JVM DNS cache",
+      "inventory-service"
+    ],
+    "root_cause": "The JVM cached the old DNS record indefinitely (networkaddress.cache.ttl unset), so clients never resolved the new primary after failover.",
+    "resolution": [
+      "Confirm failover time in RDS events and compare resolved IPs (read-only)",
+      "Perform a controlled rolling restart of affected pods",
+      "Set a short JVM DNS TTL"
+    ],
+    "preventive_actions": [
+      "Set networkaddress.cache.ttl to 30s or less",
+      "Include failover drills in game days",
+      "Use pool validation queries and max connection lifetime"
+    ],
+    "keywords": [
+      "rds",
+      "failover",
+      "dns",
+      "connection"
+    ],
+    "timestamp": "2026-09-15T10:00:00Z"
+  },
+  {
+    "incident_id": "CUR-010",
+    "title": "EKS Node NotReady Due to Disk Pressure from Container Logs",
+    "service": "platform-nodes",
+    "category": "Storage",
+    "severity": "High",
+    "environment": "Production",
+    "description": "Several EKS worker nodes went NotReady and pods were evicted after node disks filled with container logs and unused images.",
+    "symptoms": [
+      "Nodes NotReady",
+      "Pods evicted (DiskPressure)",
+      "No space left on device errors"
+    ],
+    "logs": [
+      "kubelet: eviction manager: attempting to reclaim ephemeral-storage",
+      "Node condition DiskPressure=True",
+      "write /var/log/containers/app.log: no space left on device"
+    ],
+    "affected_components": [
+      "AWS EKS",
+      "kubelet",
+      "Worker nodes",
+      "Container runtime"
+    ],
+    "root_cause": "A debug log level left enabled in one service generated tens of GB per node; log rotation limits were not configured.",
+    "resolution": [
+      "Check node conditions with `kubectl describe node <node>` (read-only)",
+      "Reduce the offending log level via config change",
+      "Cordon and drain affected nodes after confirming capacity, then recycle them",
+      "Clean unused images through the node-group lifecycle"
+    ],
+    "preventive_actions": [
+      "Configure container log rotation (max size / files)",
+      "Alert on node disk usage above 75%",
+      "Set ephemeral-storage requests/limits"
+    ],
+    "keywords": [
+      "disk pressure",
+      "nodenotready",
+      "eks",
+      "logs"
+    ],
+    "timestamp": "2026-09-15T10:00:00Z"
+  }
+]

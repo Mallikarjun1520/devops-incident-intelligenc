@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DevOps Incident Intelligence</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">&#9650;</span>
+      <h1>DevOps Incident Intelligence</h1>
+    </div>
+    <div class="status" id="status" title="Checking service health...">
+      <span class="dot dot-unknown" id="status-dot"></span>
+      <span id="status-text">Checking...</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- LEFT: input -->
+    <section class="panel input-panel" aria-labelledby="input-title">
+      <h2 id="input-title">Incident Input</h2>
+      <p class="hint">Paste logs, alerts or an incident description. Upload <code>.txt</code>, <code>.log</code> or <code>.json</code> files.</p>
+      <textarea id="incident-input" spellcheck="false" placeholder="Example:&#10;ERROR orders-api: required environment variable PAYMENT_GATEWAY_KEY is not set&#10;kubelet: Back-off restarting failed container&#10;orders-api-6c9d7f8b5-k2m4n   0/1   CrashLoopBackOff   6   11m"></textarea>
+      <div class="input-meta">
+        <span id="file-chip" class="file-chip" hidden></span>
+        <span id="char-count" class="muted">0 characters</span>
+      </div>
+      <div class="actions">
+        <button class="btn btn-ghost" id="sample-btn" type="button">Load demo incident</button>
+        <label class="btn btn-secondary" for="file-input">Upload Incident</label>
+        <input type="file" id="file-input" accept=".txt,.log,.json" hidden>
+        <button class="btn btn-primary" id="analyze-btn" type="button">Analyze Incident</button>
+        <button class="btn btn-ghost" id="clear-btn" type="button">Clear</button>
+      </div>
+      <p class="safety-note"><strong>Advisory only.</strong> This tool never executes commands or changes infrastructure. Secrets such as passwords and tokens are masked before analysis.</p>
+    </section>
+
+    <!-- RIGHT: results -->
+    <section class="results" aria-live="polite" aria-labelledby="results-title">
+      <h2 class="visually-hidden" id="results-title">Analysis results</h2>
+
+      <div class="panel state" id="state-empty">
+        <div class="state-icon" aria-hidden="true">&#9776;</div>
+        <h3>No analysis yet</h3>
+        <p class="muted">Submit an incident to review its summary and related historical records.</p>
+      </div>
+
+      <div class="panel state" id="state-loading" hidden>
+        <div class="spinner" aria-hidden="true"></div>
+        <h3>Analyzing incident...</h3>
+        <p class="muted">Parsing, retrieving similar incidents and reasoning. This usually takes 5&ndash;20 seconds.</p>
+      </div>
+
+      <div class="panel state state-error" id="state-error" hidden role="alert">
+        <h3>Analysis failed</h3>
+        <p id="error-message"></p>
+        <p class="muted" id="error-note" hidden>Retrieved historical evidence is still shown below.</p>
+      </div>
+
+      <article class="panel severity-index" id="severity-index" hidden aria-live="polite">
+        <div class="severity-index-main">
+          <div class="score-label">Evidence-based signal index</div>
+          <div class="score-value"><span id="severity-score">—</span><span class="score-max"> / 100</span>
+            <span class="badge sev-unknown" id="severity-badge">Insufficient evidence</span></div>
+          <div class="meter" role="meter" aria-label="Evidence-based severity score" aria-valuemin="1" aria-valuemax="100">
+            <div class="meter-fill" id="severity-meter"></div>
+          </div>
+          <p class="muted small" id="severity-basis"></p>
+        </div>
+        <div class="severity-evidence-wrap">
+          <h4>Signals contributing to score</h4>
+          <ul id="severity-evidence"></ul>
+        </div>
+      </article>
+
+      <div id="analysis" hidden>
+        <article class="panel" id="assessment">
+          <header class="card-head">
+            <h3>Incident Assessment</h3>
+          </header>
+          <div class="scores">
+            <div class="score score-secondary">
+              <div class="score-label">Reported severity</div>
+              <div class="score-value"><span id="ai-severity">Unknown</span></div>
+              <p class="muted small">Classification in the incident assessment.</p>
+            </div>
+            <div class="score score-secondary">
+              <div class="score-label">Assessment confidence</div>
+              <div class="score-value"><span id="confidence-score">0</span><span class="score-max">%</span></div>
+              <div class="meter"><div class="meter-fill meter-neutral" id="confidence-meter"></div></div>
+              <p class="muted small">Confidence indication from the completed assessment.</p>
+            </div>
+          </div>
+          <h4>Incident Summary</h4>
+          <p id="summary"></p>
+          <h4>Root Cause</h4>
+          <p id="root-cause"></p>
+          <h4>Affected Components</h4>
+          <div class="chips" id="components"></div>
+          <h4>Observed Symptoms</h4>
+          <ul id="symptoms"></ul>
+        </article>
+
+        <article class="panel">
+          <header class="card-head"><h3>Extracted From Your Incident</h3><span class="tag tag-fact">Facts &middot; parsed from input</span></header>
+          <dl class="facts" id="facts"></dl>
+        </article>
+
+        <article class="panel">
+          <header class="card-head"><h3>Analysis Reasoning</h3></header>
+          <p id="reasoning" class="prewrap"></p>
+        </article>
+
+        <article class="panel">
+          <header class="card-head"><h3>Recommended Resolution</h3></header>
+          <p class="cmd-note">Commands shown are suggestions only and require human review before use.</p>
+          <ol id="resolution"></ol>
+        </article>
+
+        <article class="panel">
+          <header class="card-head"><h3>Preventive Actions</h3></header>
+          <ol id="prevention"></ol>
+        </article>
+
+        <article class="panel">
+          <header class="card-head"><h3>Verification Steps</h3></header>
+          <ol id="verification"></ol>
+        </article>
+      </div>
+
+      <article class="panel" id="evidence-panel" hidden>
+        <header class="card-head"><h3>Retrieved Historical Evidence</h3><span class="tag tag-hist">Historical &middot; ChromaDB</span></header>
+        <p class="muted small" id="evidence-empty" hidden>No sufficiently similar historical incidents were found.</p>
+        <div id="evidence"></div>
+      </article>
+
+      <article class="panel warnings" id="warnings-panel" hidden>
+        <header class="card-head"><h3>Warnings</h3></header>
+        <ul id="warnings"></ul>
+      </article>
+    </section>
+  </main>
+
+  <div class="assistant-dock" id="assistant-dock" hidden>
+    <div class="assistant-notice" id="assistant-notice">
+      <span class="assistant-notice-dot" aria-hidden="true"></span>
+      <span>Analysis ready. Need help with the findings?</span>
+      <button class="assistant-notice-action" id="assistant-notice-open" type="button">Ask a question</button>
+    </div>
+    <button class="assistant-launcher" id="assistant-launcher" type="button" aria-controls="assistant-panel"
+      aria-expanded="false">
+      <span class="assistant-launcher-icon" aria-hidden="true">?</span>
+      <span class="assistant-launcher-copy"><strong>Incident Assistant</strong><small>Ask about this analysis</small></span>
+      <span class="assistant-launcher-ping" aria-hidden="true"></span>
+    </button>
+  </div>
+
+  <section class="assistant-panel" id="assistant-panel" role="dialog" aria-labelledby="assistant-title"
+    aria-modal="false" hidden>
+    <header class="assistant-header">
+      <div class="assistant-header-copy">
+        <span class="assistant-header-icon" aria-hidden="true">?</span>
+        <div><h2 id="assistant-title">Incident Assistant</h2><span class="assistant-status">Read-only assistance</span></div>
+      </div>
+      <button class="assistant-close" id="assistant-close" type="button" aria-label="Close incident assistant">×</button>
+    </header>
+    <p class="assistant-intro">Ask about this incident, its assessment, or related historical records. This assistant cannot run commands or change systems.</p>
+    <div class="assistant-messages" id="assistant-messages" role="log" aria-live="polite" aria-relevant="additions"></div>
+    <form class="assistant-form" id="assistant-form">
+      <label class="visually-hidden" for="assistant-question">Ask a question about this incident</label>
+      <input id="assistant-question" name="question" type="text" maxlength="1000" autocomplete="off"
+        placeholder="Ask about the incident evidence…" required>
+      <button class="btn btn-primary" id="assistant-send" type="submit">Send</button>
+    </form>
+  </section>
+
+  <script src="./script.js"></script>
+</body>
+</html>
